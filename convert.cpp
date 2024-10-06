@@ -17,11 +17,21 @@ struct closure {
     vector<vector<int>> g;
     // the i-th depset
     vector<set<int>> order;
+    
+    set<int> univ;
+
+    vector<vector<int>> node_level;
+    vector<vector<int>> univ_level;
+    vector<vector<int>> exist_level;
+
     void find_closure() {
         vector<set<int>> ss;
         int i, j;
         for (auto &iter : depset) {
             ss.push_back(iter.first);
+            for (auto &u : iter.first) {
+                univ.insert(u);
+            }
         }
 
         for (i = 0 ; i < (int) ss.size(); ++i) {
@@ -95,6 +105,22 @@ struct closure {
 
         cnt = 1;
         dfs(1, 0);
+
+        univ_level = vector<vector<int>>(*max_element(level.begin(), level.end()) + 1, vector<int>());
+        node_level = vector<vector<int>>(*max_element(level.begin(), level.end()) + 1, vector<int>());
+        exist_level = vector<vector<int>>(*max_element(level.begin(), level.end()) + 1, vector<int>());
+        for (auto &iter : var2id) {
+            int v = iter.first, i = iter.second;
+            if (univ.find(v) == univ.end()) {
+                exist_level[level[i]].push_back(v);
+            } else {
+                univ_level[level[i]].push_back(v);
+            }
+        }
+
+        for (i = 1; i < (int) id.size(); ++i) {
+            node_level[level[i]].push_back(i);
+        }
     }
 
     void show() {
@@ -122,13 +148,37 @@ struct closure {
         for (auto &iter : var2id) {
             printf("var2id[%d]=%d\n", iter.first, iter.second);
         }
+
+        for (i = 1; i < (int) univ_level.size(); ++i) {
+            printf("universal level [%d]: ", i);
+            for (auto &u : univ_level[i]) {
+                printf(" %d", u);
+            }
+            printf("\n");
+        }
+
+        for (i = 1; i < (int) exist_level.size(); ++i) {
+            printf("existential level [%d]: ", i);
+            for (auto &u : exist_level[i]) {
+                printf(" %d", u);
+            }
+            printf("\n");
+        }
+
+        for (i = 1; i < (int) node_level.size(); ++i) {
+            printf("dependency set id at level [%d]: ", i);
+            for (auto &u : node_level[i]) {
+                printf(" %d", u);
+            }
+            printf("\n");
+        }
     }
 };
 
 struct formula {
     // clause is a set of literals
     vector<vector<int>> clauses;
-    // dep is a vector of set of universal variables
+    // dep is a vector of set of universal variables a variable depends on
     vector<set<int>> dep;
     // univ is a set of universal variables
     set<int> univ;
@@ -173,6 +223,105 @@ struct formula {
         T.find_closure();
         T.construct_closure_tree();
         T.show();
+    }
+
+    void dqbf2qbf(string outpath) {
+        int i;
+        int nv = dep.size() - 1;
+        FILE *fp = fopen(outpath.c_str(), "w");
+        for (i = 1; i < (int) T.node_level.size(); ++i) {
+            vector<vector<int>> nextclauses;
+            for (auto &clause : clauses) {
+                map<int, vector<int>> c;
+                for (auto &l : clause) {
+                    if (abs(l) < (int) dep.size()) {
+                        int tid = T.var2id[abs(l)];
+                        if (T.level[tid] >= i) {
+                            // literals of the original formula
+                            for (auto &deps_id : T.node_level[i]) { 
+                                if (T.id[tid] >= T.id[deps_id] && T.id[tid] <= T.id[deps_id] + T.sz[deps_id] - 1) {
+                                    c[deps_id].push_back(l);
+                                }
+                            }    
+                        }
+                        
+                    }
+                }
+
+                if ((int) c.size() < 2) {
+                    nextclauses.push_back(clause);
+                } else {
+                    int mx = c.rbegin()->first;
+                    for (auto &l : clause) {
+                        if (abs(l) < (int) dep.size() && T.level[T.var2id[abs(l)]] < i) {
+                            c[mx].push_back(l);
+                        }
+
+                        if (abs(l) > dep.size()) {
+                            c[mx].push_back(l);
+                        }
+                    }
+
+                    for (auto &iter : c) {
+                        if (iter.first < mx) {
+                            iter.second.push_back(++nv);
+                            c[mx].push_back(-nv);
+                            T.exist_level[i-1].push_back(nv);
+                        }
+                    }
+
+                    for (auto &iter : c) {
+                        vector<int> lits;
+                        for (auto &l : iter.second) {
+                            lits.push_back(l);
+                        }
+
+                        nextclauses.push_back(lits);
+                    }
+                }
+            }
+
+
+            clauses = nextclauses;
+        
+            printf("after step [%d]: %d variables and %d clauses\n", i, nv, (int) clauses.size());
+
+            for (auto &clause : clauses) {
+                for (auto &l : clause) {
+                    printf("%d ", l);
+                }
+                printf("\n");
+            }
+        }    
+
+        fprintf(fp, "p cnf %d %d\n", nv, (int) clauses.size());
+
+        for (i = 1; i < (int) T.node_level.size(); ++i) {
+            if (!T.univ_level[i].empty()) {
+                fprintf(fp, "a");
+                for (auto &u : T.univ_level[i]) {
+                    fprintf(fp, " %d", u);
+                }   
+                fprintf(fp, " 0\n");
+            }
+
+            if (!T.exist_level[i].empty()) {
+                fprintf(fp, "e");
+                for (auto &u : T.exist_level[i]) {
+                    fprintf(fp, " %d", u);
+                }   
+                fprintf(fp, " 0\n");
+            }
+        }
+
+        for (auto &clause : clauses) {
+            for (auto &l : clause) {
+                fprintf(fp, "%d ", l);
+            }
+            fprintf(fp, "0\n");
+        }
+
+        fclose(fp);
     }
 
     // print out the dqdimacs file
@@ -283,13 +432,14 @@ formula read_dqdimacs(string path) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        printf("Usage ./convert [input_file_path]");
+    if (argc != 3) {
+        printf("Usage ./convert [input_file_path] [out_file_path]\n");
         return 0;
     }
 
     formula f = read_dqdimacs(string(argv[1]));
     f.show();
     f.compute_closure();
+    f.dqbf2qbf(string(argv[2]));
     return 0;
 }
