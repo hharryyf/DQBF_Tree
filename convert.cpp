@@ -4,11 +4,13 @@ using namespace std;
 
 
 struct closure {
-    int cnt;
+    int cnt, log_level;
     vector<int> level;
     map<set<int>, vector<int>> depset;
     // map the existential/universal variable to the tree node id
     map<int, int> var2id;
+    // parent
+    vector<vector<int>> parent;
     // the dfs order of the i-th depset in the tree
     vector<int> id;
     // the subtree size of the i-th depset in the tree
@@ -48,6 +50,7 @@ struct closure {
 
     void dfs(int v, int p) {
         id[v] = cnt++;
+        parent[v][0] = p;
         level[v] = level[p] + 1;
         sz[v] = 1;
         if (depset.find(order[v]) != depset.end()) {
@@ -90,8 +93,14 @@ struct closure {
 
         sort(order.begin(), order.end(), cmp);
 
+        log_level = 0;
+        while ((1 << log_level) <= (int) depset.size()) {
+            log_level++;
+        }
+
         g = vector<vector<int>>(depset.size() + 1, vector<int>());
         level = vector<int>(depset.size() + 1, 0);
+        parent = vector<vector<int>>(depset.size() + 1, vector<int>(log_level, 0));
         id = vector<int>(depset.size() + 1, 0);
         sz = vector<int>(depset.size() + 1, 0);
         for (i = 2 ; i < (int) order.size(); ++i) {
@@ -106,6 +115,12 @@ struct closure {
         cnt = 1;
         dfs(1, 0);
 
+        for (i = 1; i < log_level; ++i) {
+            for (j = 1; j < (int) depset.size() + 1; ++j) {
+                parent[j][i] = parent[parent[j][i-1]][i-1];
+            }
+        }
+        
         univ_level = vector<vector<int>>(*max_element(level.begin(), level.end()) + 1, vector<int>());
         node_level = vector<vector<int>>(*max_element(level.begin(), level.end()) + 1, vector<int>());
         exist_level = vector<vector<int>>(*max_element(level.begin(), level.end()) + 1, vector<int>());
@@ -171,6 +186,13 @@ struct closure {
                 printf(" %d", u);
             }
             printf("\n");
+        }
+
+        printf("parent size = %d\n", log_level);
+        for (i = 1; i < (int) depset.size() + 1; ++i) {
+            for (int j = 0; j < log_level; ++j) {
+                printf("parent[%d][%d] = %d\n", i, j, parent[i][j]);
+            }
         }
     }
 };
@@ -238,11 +260,20 @@ struct formula {
                         int tid = T.var2id[abs(l)];
                         if (T.level[tid] >= i) {
                             // literals of the original formula
-                            for (auto &deps_id : T.node_level[i]) { 
-                                if (T.id[tid] >= T.id[deps_id] && T.id[tid] <= T.id[deps_id] + T.sz[deps_id] - 1) {
-                                    c[deps_id].push_back(l);
+                            //for (auto &deps_id : T.node_level[i]) { 
+                            //    if (T.id[tid] >= T.id[deps_id] && T.id[tid] <= T.id[deps_id] + T.sz[deps_id] - 1) {
+                            //        c[deps_id].push_back(l);
+                            //    }
+                            //}
+                            // use the LCA to speed up
+                            // printf("literal = %d, tid = %d, current level=%d ",l, tid, T.level[tid]);
+                            for (int j = T.log_level - 1; j >= 0; --j) {
+                                if (T.level[tid] - i >= (1 << j)) {
+                                    tid = T.parent[tid][j];
                                 }
-                            }    
+                            }       
+                            //printf("sub-tree tid=%d, level=%d\n", tid, T.level[tid]);
+                            c[tid].push_back(l);
                         }
                         
                     }
